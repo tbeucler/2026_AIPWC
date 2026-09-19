@@ -12,12 +12,11 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-from .paths import OUTPUT, RAW
-
-
+ROOT = Path(__file__).resolve().parents[1]
+RAW = ROOT / "data" / "raw"
+OUTPUT = ROOT / "output"
 DEFAULT_DATA = RAW / "throughput" / "Throughput_Data_AIPWC.csv"
-DEFAULT_OUTPUT = OUTPUT / "Figure_SYPD.pdf"
-DEFAULT_TWO_PANEL_OUTPUT = OUTPUT / "Figure_SYPD_two_panel.pdf"
+DEFAULT_OUTPUT = OUTPUT / "Figure_SYPD_two_panel.pdf"
 
 RAW_COLUMNS = [
     "model_name",
@@ -47,7 +46,7 @@ class ThroughputFit:
     observations: pd.DataFrame
     weights: pd.Series
     result: object
-    x_column: str
+    predictor: str
 
     @property
     def coefficient(self) -> float:
@@ -91,13 +90,13 @@ class ThroughputFit:
         exponent = float(interval[1, 0]), float(interval[1, 1])
         return coefficient, exponent
 
-    def prediction_interval95(self, x_value: float) -> tuple[float, float]:
-        """Return the 95% observation prediction interval at one positive x."""
+    def prediction_interval95(self, predictor_value: float) -> tuple[float, float]:
+        """Return the 95% observation prediction interval at one positive value."""
 
-        if x_value <= 0:
-            raise ValueError("x_value must be positive")
+        if predictor_value <= 0:
+            raise ValueError("predictor_value must be positive")
         design = sm.add_constant(
-            np.array([np.log10(x_value)]), has_constant="add"
+            np.array([np.log10(predictor_value)]), has_constant="add"
         )
         prediction = self.result.get_prediction(design).summary_frame(alpha=0.05)
         return (
@@ -131,7 +130,7 @@ def load_raw_data(path: Path = DEFAULT_DATA) -> pd.DataFrame:
     for column in ["dx", "nvert", "dt", "sypd", "nacc", "nprog"]:
         data[column] = pd.to_numeric(data[column], errors="coerce")
 
-    data["x"] = data["dx"] ** 2 * data["dt"]
+    data["spatiotemporal_resolution"] = data["dx"] ** 2 * data["dt"]
     data["sypd_norm"] = (
         data["sypd"] * data["nprog"] * data["nvert"] / data["nacc"]
     )
@@ -148,37 +147,42 @@ def select_fit_rows(data: pd.DataFrame) -> pd.DataFrame:
             & data["model_type"].eq("trad_cpu")
         )
         & data["nacc"].notna()
-        & np.isfinite(data["x"])
+        & np.isfinite(data["spatiotemporal_resolution"])
         & np.isfinite(data["sypd_norm"])
-        & data["x"].gt(0)
+        & data["spatiotemporal_resolution"].gt(0)
         & data["sypd_norm"].gt(0)
     )
     return data.loc[keep].copy()
 
 
-def fit_power_law(data: pd.DataFrame, x_column: str = "x") -> ThroughputFit:
-    """Fit log10(SYPD_norm) on log10(x), with equal total weight per model."""
+def fit_power_law(
+    data: pd.DataFrame,
+    predictor: str = "spatiotemporal_resolution",
+) -> ThroughputFit:
+    """Fit a log-log power law with equal total weight per model."""
 
     observations = select_fit_rows(data)
+    if len(observations) != 51 or observations["model_name"].nunique() != 6:
+        raise ValueError("Expected 51 configurations from six model families")
     counts = observations.groupby("model_name")["model_name"].transform("count")
     weights = 1.0 / counts
     weights = weights / weights.mean()
 
-    log_x = np.log10(observations[x_column].to_numpy())
+    log_predictor = np.log10(observations[predictor].to_numpy())
     log_t = np.log10(observations["sypd_norm"].to_numpy())
-    design = sm.add_constant(log_x)
+    design = sm.add_constant(log_predictor)
     result = sm.WLS(log_t, design, weights=weights.to_numpy()).fit()
-    return ThroughputFit(observations, weights, result, x_column)
+    return ThroughputFit(observations, weights, result, predictor)
 
 
 def _prediction_data(fit: ThroughputFit):
-    log_x = np.log10(fit.observations[fit.x_column].to_numpy())
-    grid_log_x = np.linspace(log_x.min() - 0.04, log_x.max() + 0.04, 600)
-    prediction = fit.result.get_prediction(sm.add_constant(grid_log_x)).summary_frame(
-        alpha=0.05
+    log_predictor = np.log10(fit.observations[fit.predictor].to_numpy())
+    grid_log = np.linspace(
+        log_predictor.min() - 0.04, log_predictor.max() + 0.04, 600
     )
+    prediction = fit.result.get_prediction(sm.add_constant(grid_log)).summary_frame(alpha=0.05)
     return (
-        10.0**grid_log_x,
+        10.0**grid_log,
         10.0 ** prediction["mean"].to_numpy(),
         10.0 ** prediction["obs_ci_lower"].to_numpy(),
         10.0 ** prediction["obs_ci_upper"].to_numpy(),
@@ -195,17 +199,21 @@ def _plot_panel(
     legend_location: str | None = None,
 ) -> None:
     grid_x, line, lower, upper = _prediction_data(fit)
-    ax.fill_between(grid_x, lower, upper, color="0.78", alpha=0.42, linewidth=0)
-    ax.plot(grid_x, line, color="black", linewidth=1.35)
+    ax.set_axisbelow(True)
+    ax.fill_between(
+        grid_x, lower, upper, color="0.78", alpha=0.42, linewidth=0, zorder=1
+    )
+    ax.plot(grid_x, line, color="black", linewidth=1.35, zorder=2)
 
     for name, style in MODEL_STYLES.items():
         rows = fit.observations["model_name"].eq(name)
         ax.scatter(
-            fit.observations.loc[rows, fit.x_column],
+            fit.observations.loc[rows, fit.predictor],
             fit.observations.loc[rows, "sypd_norm"],
             label=name,
             edgecolors="none",
             alpha=0.98,
+            zorder=3,
             **style,
         )
 
@@ -231,65 +239,23 @@ def _plot_panel(
         )
 
 
-def _fit_record(name: str, fit: ThroughputFit) -> dict[str, float | int | str]:
-    coefficient_low, coefficient_high = fit.coefficient_ci95
-    exponent_low, exponent_high = fit.exponent_ci95
-    robust_coefficient, robust_exponent = fit.cluster_robust_ci95
-    prediction_low, prediction_high = fit.prediction_interval95(1.0)
-    return {
-        "fit": name,
-        "x_column": fit.x_column,
-        "n": len(fit.observations),
-        "coefficient": fit.coefficient,
-        "coefficient_ci95_low": coefficient_low,
-        "coefficient_ci95_high": coefficient_high,
-        "exponent": fit.exponent,
-        "exponent_ci95_low": exponent_low,
-        "exponent_ci95_high": exponent_high,
-        "cluster_robust_coefficient_ci95_low": robust_coefficient[0],
-        "cluster_robust_coefficient_ci95_high": robust_coefficient[1],
-        "cluster_robust_exponent_ci95_low": robust_exponent[0],
-        "cluster_robust_exponent_ci95_high": robust_exponent[1],
-        "cluster_count": fit.observations["model_name"].nunique(),
-        "weighted_r_squared": fit.result.rsquared,
-        "prediction_reference_x": 1.0,
-        "prediction_ci95_low": prediction_low,
-        "prediction_ci95_high": prediction_high,
-    }
-
-
-def _model_offset_records(name: str, fit: ThroughputFit) -> list[dict[str, object]]:
-    """Return mean per-model vertical offsets from one descriptive fit."""
-
+def mean_absolute_model_offset(fit: ThroughputFit) -> float:
+    """Average absolute model-mean residual, in log10 decades."""
     observations = fit.observations.copy()
-    log_x = np.log10(observations[fit.x_column].to_numpy())
+    log_predictor = np.log10(observations[fit.predictor].to_numpy())
     observations["offset_decades"] = (
         np.log10(observations["sypd_norm"].to_numpy())
-        - fit.result.predict(sm.add_constant(log_x))
+        - fit.result.predict(sm.add_constant(log_predictor))
     )
-    records = []
-    for model_name, rows in observations.groupby("model_name", sort=True):
-        records.append(
-            {
-                "fit": name,
-                "x_column": fit.x_column,
-                "model_name": model_name,
-                "n": len(rows),
-                "mean_offset_decades": rows["offset_decades"].mean(),
-                "minimum_offset_decades": rows["offset_decades"].min(),
-                "maximum_offset_decades": rows["offset_decades"].max(),
-            }
-        )
-    return records
+    model_means = observations.groupby("model_name")["offset_decades"].mean()
+    return float(model_means.abs().mean())
 
 
 def make_figure(
     data_path: Path = DEFAULT_DATA,
-    output_path: Path | None = None,
-    *,
-    two_panel: bool = False,
-) -> ThroughputFit:
-    """Create a single- or two-panel publication PDF and PNG preview.
+    output_path: Path = DEFAULT_OUTPUT,
+) -> tuple[ThroughputFit, ThroughputFit]:
+    """Create the two-panel publication PDF and PNG preview.
 
     Expected with the frozen raw CSV and equal total weight per model:
     - dx fit: SYPD_norm = 4.331e3 * dx^3.1371; working-model coefficient 95% CI
@@ -300,15 +266,13 @@ def make_figure(
     - The equal-model mean absolute vertical offset decreases from 0.8078
       decades for dx to 0.2408 decades for dx^2 dt.
     The plotted working-model 95% observation prediction intervals vary with
-    x. Their values at x=1, the working-model parameter intervals, and
-    model-clustered sensitivity intervals are written to ``throughput_fit.csv``.
+    the predictor. Their values at predictor=1, the parameter intervals, and
+    model-clustered sensitivity intervals are printed when run as a script.
     """
 
     data = load_raw_data(data_path)
     fit_dx = fit_power_law(data, "dx")
-    fit_dx2_dt = fit_power_law(data, "x")
-    if output_path is None:
-        output_path = DEFAULT_TWO_PANEL_OUTPUT if two_panel else DEFAULT_OUTPUT
+    fit_spatiotemporal = fit_power_law(data, "spatiotemporal_resolution")
 
     plt.rcParams.update(
         {
@@ -321,38 +285,23 @@ def make_figure(
             "legend.fontsize": 16,
         }
     )
-    if two_panel:
-        fig, axes = plt.subplots(1, 2, figsize=(15.8, 4.5), sharey=True)
-        _plot_panel(
-            axes[0],
-            fit_dx,
-            x_label=r"$\Delta x\;[{}^{\circ}]$",
-            x_limits=(2e-2, 5.5),
-            panel_label="(a)",
-        )
-        _plot_panel(
-            axes[1],
-            fit_dx2_dt,
-            x_label=r"$(\Delta x)^2\,\Delta t\;[({}^{\circ})^2\,\mathrm{hr}]$",
-            x_limits=(2e-5, 1.3e2),
-            panel_label="(b)",
-            legend_location="lower right",
-        )
-        axes[0].set_ylabel(
-            r"$\mathrm{SYPD}_{\mathrm{norm}}$"
-        )
-    else:
-        fig, ax = plt.subplots(figsize=(10.2, 4.5))
-        _plot_panel(
-            ax,
-            fit_dx2_dt,
-            x_label=r"$(\Delta x)^2\,\Delta t\;[({}^{\circ})^2\,\mathrm{hr}]$",
-            x_limits=(2e-5, 1.3e2),
-            legend_location="upper left",
-        )
-        ax.set_ylabel(
-            r"$\mathrm{SYPD}_{\mathrm{norm}}$"
-        )
+    fig, axes = plt.subplots(1, 2, figsize=(15.8, 4.5), sharey=True)
+    _plot_panel(
+        axes[0],
+        fit_dx,
+        x_label=r"$\Delta x\;[{}^{\circ}]$",
+        x_limits=(2e-2, 5.5),
+        panel_label="(a)",
+    )
+    _plot_panel(
+        axes[1],
+        fit_spatiotemporal,
+        x_label=r"$(\Delta x)^2\,\Delta t\;[({}^{\circ})^2\,\mathrm{hr}]$",
+        x_limits=(2e-5, 1.3e2),
+        panel_label="(b)",
+        legend_location="lower right",
+    )
+    axes[0].set_ylabel(r"$\mathrm{SYPD}_{\mathrm{norm}}$")
     fig.tight_layout()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,16 +309,37 @@ def make_figure(
     fig.savefig(output_path.with_suffix(".png"), dpi=180, bbox_inches="tight")
     plt.close(fig)
 
-    summary = pd.DataFrame(
-        [
-            _fit_record("horizontal_resolution", fit_dx),
-            _fit_record("spatiotemporal_resolution", fit_dx2_dt),
-        ]
+    return fit_dx, fit_spatiotemporal
+
+
+def print_fit(label: str, fit: ThroughputFit) -> None:
+    """Print the paper-facing fit and uncertainty numbers."""
+
+    coefficient_ci = fit.coefficient_ci95
+    exponent_ci = fit.exponent_ci95
+    robust_coefficient_ci, robust_exponent_ci = fit.cluster_robust_ci95
+    prediction_ci = fit.prediction_interval95(1.0)
+    print(
+        f"{label}: n={len(fit.observations)}\n"
+        f"  SYPD_norm = {fit.coefficient:.6g} * {label}^{fit.exponent:.6f}\n"
+        f"  working-model coefficient 95% CI: [{coefficient_ci[0]:.6g}, "
+        f"{coefficient_ci[1]:.6g}]\n"
+        f"  working-model exponent 95% CI: [{exponent_ci[0]:.6f}, "
+        f"{exponent_ci[1]:.6f}]\n"
+        f"  cluster-robust coefficient sensitivity CI: "
+        f"[{robust_coefficient_ci[0]:.6g}, {robust_coefficient_ci[1]:.6g}]\n"
+        f"  cluster-robust exponent sensitivity CI: "
+        f"[{robust_exponent_ci[0]:.6f}, {robust_exponent_ci[1]:.6f}]\n"
+        f"  weighted R^2: {fit.result.rsquared:.6f}\n"
+        f"  observation 95% PI at predictor=1: "
+        f"[{prediction_ci[0]:.6g}, {prediction_ci[1]:.6g}]\n"
+        f"  mean absolute model offset: "
+        f"{mean_absolute_model_offset(fit):.6f} decades"
     )
-    summary.to_csv(output_path.parent / "throughput_fit.csv", index=False)
-    offsets = pd.DataFrame(
-        _model_offset_records("horizontal_resolution", fit_dx)
-        + _model_offset_records("spatiotemporal_resolution", fit_dx2_dt)
-    )
-    offsets.to_csv(output_path.parent / "throughput_model_offsets.csv", index=False)
-    return fit_dx2_dt
+
+
+if __name__ == "__main__":
+    horizontal_fit, spatiotemporal_fit = make_figure()
+    print_fit("horizontal_resolution", horizontal_fit)
+    print_fit("spatiotemporal_resolution", spatiotemporal_fit)
+    print(f"Wrote {DEFAULT_OUTPUT}")

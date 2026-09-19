@@ -15,9 +15,9 @@ import numpy as np
 import pandas as pd
 import rasterio
 
-from .paths import OUTPUT, RAW
-
-
+ROOT = Path(__file__).resolve().parents[1]
+RAW = ROOT / "data" / "raw"
+OUTPUT = ROOT / "output"
 SID = "2023234N18128"
 INIT_TIME = pd.Timestamp("2023-08-31 12:00", tz="UTC")
 END_TIME = pd.Timestamp("2023-09-03 12:00", tz="UTC")
@@ -36,6 +36,12 @@ MODEL_STYLE = {
     "Probabilistic AI": {"color": "#e6b800", "linestyle": "-"},
     "AI Post-Processing": {"color": "#9467bd", "linestyle": "--"},
 }
+FORECAST_FILES = {
+    "2023_TIGGE_IFS.csv": "Physics-based",
+    "2023_PANGU.csv": "Deterministic AI",
+    "2023_GENC.csv": "Probabilistic AI",
+    "postprocessing_panguweather_ANN_LeakyReLU,_M_2023.csv": "AI Post-Processing",
+}
 
 
 def _column(frame: pd.DataFrame, candidates: Iterable[str]) -> str | None:
@@ -46,103 +52,39 @@ def _column(frame: pd.DataFrame, candidates: Iterable[str]) -> str | None:
     return None
 
 
-def _model_family(label: str) -> str | None:
-    value = label.lower().replace("_", " ").replace("-", " ")
-    if "postprocess" in value or "post processing" in value or "ann" in value:
-        return "AI Post-Processing"
-    if "genc" in value or "gen cast" in value or "probabil" in value:
-        return "Probabilistic AI"
-    if "pangu" in value:
-        return "Deterministic AI"
-    if (
-        "hres" in value
-        or "ecmwf" in value
-        or "tigge" in value
-        or "ifs" in value
-        or "physics" in value
-    ):
-        return "Physics-based"
-    for item in MODEL_ORDER:
-        if value.strip() == item.lower():
-            return item
-    return None
-
-
 def load_observations(data_dir: Path = DEFAULT_DATA) -> pd.DataFrame:
-    """Load the Saola subset from raw IBTrACS CSV files without rewriting them."""
+    """Load only Saola from the unmodified IBTrACS archive."""
 
-    files = sorted((data_dir / "ibtracs").rglob("*.csv"))
-    root_file = data_dir / "2023_IBTrACS.csv"
-    if root_file.exists():
-        files.append(root_file)
-    if not files:
-        raise FileNotFoundError(
-            "No IBTrACS CSV found. Copy the HPC ibtracs directory (or "
-            "2023_IBTrACS.csv) under data/raw/saola/."
-        )
-
-    pieces: list[pd.DataFrame] = []
-    for path in files:
-        header = pd.read_csv(path, nrows=0)
-        wanted = {
-            "sid", "iso_time", "time", "valid_time", "lat", "lon",
-            "usa_wind", "wind_kts", "wind", "vmax_kt", "usa_pres",
-            "mslp_hpa", "pressure", "pres", "pmin",
-        }
-        usecols = [column for column in header.columns if column.lower() in wanted]
-        frame = pd.read_csv(path, usecols=usecols, low_memory=False)
-        sid_col = _column(frame, ["SID", "sid"])
-        time_col = _column(frame, ["ISO_TIME", "time", "valid_time"])
-        lat_col = _column(frame, ["LAT", "lat"])
-        lon_col = _column(frame, ["LON", "lon"])
-        wind_col = _column(frame, ["USA_WIND", "wind_kts", "wind", "vmax_kt"])
-        pressure_col = _column(
-            frame, ["USA_PRES", "mslp_hpa", "pressure", "pres", "pmin"]
-        )
-        if not all([sid_col, time_col, lat_col, lon_col]):
-            continue
-        frame = frame.loc[frame[sid_col].astype(str).eq(SID)].copy()
-        if frame.empty:
-            continue
-        subset = pd.DataFrame(
-            {
-                "sid": frame[sid_col].astype(str),
-                "time": pd.to_datetime(
-                    frame[time_col],
-                    format="%Y-%m-%d %H:%M:%S",
-                    errors="coerce",
-                    utc=True,
-                ),
-                "lat": pd.to_numeric(frame[lat_col], errors="coerce"),
-                "lon": pd.to_numeric(frame[lon_col], errors="coerce"),
-                "wind_kts": pd.to_numeric(
-                    frame[wind_col] if wind_col else np.nan, errors="coerce"
-                ),
-                "mslp_hpa": pd.to_numeric(
-                    frame[pressure_col] if pressure_col else np.nan, errors="coerce"
-                ),
-            }
-        )
-        pieces.append(subset.loc[subset["sid"].eq(SID)])
-
-    if not pieces or all(piece.empty for piece in pieces):
+    path = data_dir / "ibtracs" / "ibtracs.ALL.list.v04r01.csv"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    frame = pd.read_csv(
+        path,
+        usecols=["SID", "ISO_TIME", "LAT", "LON", "USA_WIND", "USA_PRES"],
+        low_memory=False,
+    )
+    frame = frame.loc[frame["SID"].astype(str).eq(SID)].copy()
+    if frame.empty:
         raise ValueError(f"No IBTrACS rows found for Saola SID {SID}")
-    observations = pd.concat(pieces, ignore_index=True).drop_duplicates()
-    return observations.sort_values("time")
+    return pd.DataFrame(
+        {
+            "time": pd.to_datetime(frame["ISO_TIME"], errors="coerce", utc=True),
+            "lat": pd.to_numeric(frame["LAT"], errors="coerce"),
+            "lon": pd.to_numeric(frame["LON"], errors="coerce"),
+            "wind_kts": pd.to_numeric(frame["USA_WIND"], errors="coerce"),
+            "mslp_hpa": pd.to_numeric(frame["USA_PRES"], errors="coerce"),
+        }
+    ).sort_values("time")
 
 
 def load_forecasts(data_dir: Path = DEFAULT_DATA) -> pd.DataFrame:
-    """Normalize the raw 2023 TCBench result CSVs used by the source figure."""
-
-    files = sorted((data_dir / "forecasts").rglob("*.csv"))
-    if not files:
-        raise FileNotFoundError(
-            "No forecast CSVs found under data/raw/saola/forecasts/. Copy the "
-            "2023 CSVs from the HPC 'TCBench Results' directory there."
-        )
+    """Normalize the four raw TCBench tables used in this figure."""
 
     pieces: list[pd.DataFrame] = []
-    for path in files:
+    for filename, model in FORECAST_FILES.items():
+        path = data_dir / "forecasts" / filename
+        if not path.is_file():
+            raise FileNotFoundError(path)
         frame = pd.read_csv(path, low_memory=False)
         sid_col = _column(frame, ["SID", "sid"])
         init_col = _column(frame, ["Initial Time", "init_time", "init"])
@@ -154,19 +96,9 @@ def load_forecasts(data_dir: Path = DEFAULT_DATA) -> pd.DataFrame:
             frame, ["pres min", "pressure min", "mslp_hpa", "pmin"]
         )
         member_col = _column(frame, ["ensemble_idx", "member"])
-        model_col = _column(frame, ["model", "model_name"])
         if not all([sid_col, init_col, valid_col]):
-            continue
+            raise ValueError(f"Unrecognized forecast schema: {path}")
         frame = frame.loc[frame[sid_col].astype(str).eq(SID)].copy()
-        if frame.empty:
-            continue
-
-        if model_col:
-            families = frame[model_col].astype(str).map(_model_family)
-        else:
-            families = pd.Series(_model_family(path.stem), index=frame.index)
-        if families.isna().all():
-            continue
 
         member_values = (
             frame[member_col]
@@ -195,35 +127,32 @@ def load_forecasts(data_dir: Path = DEFAULT_DATA) -> pd.DataFrame:
                 "member": pd.to_numeric(
                     member_values, errors="coerce"
                 ).fillna(0),
-                "model": families,
-                "source_file": path.name,
-                "is_summary": "results" in path.stem.lower(),
+                "model": model,
             }
         )
         pieces.append(subset)
 
-    if not pieces:
-        raise ValueError("No recognizable TCBench forecast CSV schemas were found")
     forecasts = pd.concat(pieces, ignore_index=True)
     keep = (
         forecasts["sid"].eq(SID)
         & forecasts["init_time"].eq(INIT_TIME)
         & forecasts["valid_time"].between(INIT_TIME, END_TIME)
-        & forecasts["model"].notna()
     )
     forecasts = forecasts.loc[keep].copy()
-    missing = [model for model in MODEL_ORDER if model not in set(forecasts["model"])]
-    if missing:
-        raise ValueError(
-            "The Saola initialization is missing model families: " + ", ".join(missing)
-        )
+    member_counts = forecasts.groupby("model")["member"].nunique().to_dict()
+    expected = {
+        "Physics-based": 50,
+        "Deterministic AI": 1,
+        "Probabilistic AI": 50,
+        "AI Post-Processing": 50,
+    }
+    if member_counts != expected:
+        raise ValueError(f"Unexpected ensemble-member counts: {member_counts}")
     return forecasts.sort_values(["model", "valid_time", "member"])
 
 
 def _mean_series(rows: pd.DataFrame, column: str) -> pd.Series:
-    summary = rows.loc[rows["is_summary"] & rows[column].notna()]
-    source = summary if not summary.empty else rows.loc[rows[column].notna()]
-    return source.groupby("valid_time")[column].mean().sort_index()
+    return rows.dropna(subset=[column]).groupby("valid_time")[column].mean().sort_index()
 
 
 def _configure_map(ax, extent: tuple[float, float, float, float], *, dark_ocean: bool):
@@ -347,7 +276,7 @@ def make_figure(
             series = _mean_series(rows, forecast_column)
             style = MODEL_STYLE[model]
             ax.plot(series.index, series.values, linewidth=1.8, **style)
-            members = rows.loc[~rows["is_summary"] & rows[forecast_column].notna()]
+            members = rows.loc[rows[forecast_column].notna()]
             if (
                 model in {"Probabilistic AI", "AI Post-Processing"}
                 and members["member"].nunique() > 1
@@ -447,3 +376,8 @@ def make_figure(
     fig.savefig(output_path, bbox_inches="tight")
     fig.savefig(output_path.with_suffix(".png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+if __name__ == "__main__":
+    make_figure()
+    print(f"Wrote {DEFAULT_OUTPUT}")

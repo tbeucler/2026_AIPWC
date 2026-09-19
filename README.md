@@ -1,143 +1,155 @@
 # AI Pathways from Weather to Climate: figure reproduction
 
-This repository reproduces two figures for *Artificial Intelligence Pathways
-from Weather to Climate*:
+This repository contains the raw inputs and one Python script for each of two
+figures:
 
-1. the five-panel Typhoon Saola forecast-refinement case study; and
-2. the normalized model-throughput comparison.
+- `scripts/plot_saola.py`: the five-panel Typhoon Saola forecast figure;
+- `scripts/plot_throughput.py`: the two-panel normalized-throughput figure.
 
-The code reads immutable source files from `data/raw/`, reconstructs all derived
-quantities, and writes publication PDFs plus lightweight PNG previews to
-`output/`. Raw-file checksums and numerical regression tests make silent data
-changes detectable.
+Both scripts read directly from `data/raw/` and write a PDF and PNG to
+`output/`. They do not modify the source data.
 
-## Install with uv
+## Installation
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), clone this
-repository, and run from the repository root:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), clone the
+repository, and run from its root:
 
 ```bash
 uv sync --frozen
 ```
 
-The repository pins Python 3.12 in `.python-version` and exact package versions
-in `uv.lock`. `uv sync --frozen` creates the local `.venv` without modifying
-that lock. No activation is required when commands are prefixed with `uv run`.
+Python 3.12 is selected by `.python-version`, and `uv.lock` fixes the complete
+environment. No environment activation is required.
 
 ## Reproduce the figures
 
 ```bash
-uv run aipwc-figures throughput
-uv run aipwc-figures throughput --two-panel
-uv run aipwc-figures saola
+uv run python scripts/plot_throughput.py
+uv run python scripts/plot_saola.py
 ```
 
-After all Saola inputs are present, both can be built together:
-
-```bash
-uv run aipwc-figures --two-panel
-```
-
-Outputs:
+The scripts create:
 
 ```text
-output/Figure_SYPD.pdf
 output/Figure_SYPD_two_panel.pdf
 output/Figure_Forecast_Saola.pdf
-output/throughput_fit.csv
-output/throughput_model_offsets.csv
 ```
 
-The Saola map uses archived Natural Earth 1:50 million land, ocean, and
-coastline shapefiles under `data/raw/natural_earth/`; figure generation therefore
-does not need to fetch map data at runtime.
+PNG previews with the same names are also generated. The output directory is
+ignored by Git.
 
-## What the throughput script computes
+## Raw data
 
-Panel (a) uses horizontal grid spacing `dx` in degrees. Panel (b), or the
-single-panel version, uses horizontal grid spacing and time step `dt` in hours:
+The throughput CSV, GeoTIFFs, station locations, and archived Natural Earth
+shapefiles are stored under `data/raw/` and tracked by Git. The five Saola
+forecast and observation tables total approximately 547 MB and are intentionally
+not tracked:
 
 ```text
-x = dx**2 * dt.
+data/raw/saola/forecasts/2023_TIGGE_IFS.csv
+data/raw/saola/forecasts/2023_PANGU.csv
+data/raw/saola/forecasts/2023_GENC.csv
+data/raw/saola/forecasts/postprocessing_panguweather_ANN_LeakyReLU,_M_2023.csv
+data/raw/saola/ibtracs/ibtracs.ALL.list.v04r01.csv
 ```
 
-For simulated years per wall-clock day (`SYPD`), number of prognostic variables
-`nprog`, vertical levels `nvert`, and accelerators `nacc`, the throughput proxy is
+Their original Curnagl locations are:
 
 ```text
-SYPD_norm = SYPD * nprog * nvert / nacc.
+/work/FAC/FGSE/IDYST/tbeucler/default/milton/TCBench Results/
+/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/
 ```
 
-The regression is weighted least squares in base-10 log space. Each model has
-equal total weight, preventing models with many strong-scaling measurements
-from dominating the fit. Downscaling entries are excluded, as are the
-`ICON_A_GPU` CPU-only rows. The gray band is a pointwise, working-model 95%
-*observation prediction* interval for an individual reported configuration,
-not a confidence interval for the mean. Because it varies with the abscissa,
-it is stored as a reference interval at `x = 1` in
-`output/throughput_fit.csv`.
-
-The equal-model weights are design weights, not known inverse error variances.
-Consequently, the conventional WLS intervals reproduce the requested analysis
-but rely on independent, homoscedastic log-errors and should not be presented
-as assumption-free uncertainty. The fit table also reports small-sample
-cluster-robust sensitivity intervals with model as the cluster. There are only
-six clusters, so these intervals are themselves approximate; the fitted lines
-and envelopes are best interpreted descriptively.
-
-With the deposited CSV, the expected fits are:
-
-```text
-SYPD_norm = 4331.33 * dx**3.13714
-working-model coefficient 95% CI: [1938.92, 9675.72]
-working-model exponent 95% CI:    [2.74176, 3.53251]
-weighted R^2:        0.838415
-
-SYPD_norm = 8408.99 * (dx**2 * dt)**1.012775
-working-model coefficient 95% CI: [5683.24, 12442.04]
-working-model exponent 95% CI:    [0.956666, 1.068884]
-cluster-robust coefficient sensitivity CI: [4707.89, 15019.71]
-cluster-robust exponent sensitivity CI:    [0.874692, 1.150857]
-weighted R^2:        0.964096
-```
-
-Thus `1.01 +/- 0.06` is the working-model result; model clustering widens this
-to approximately `1.01 +/- 0.14`. At an abscissa of one, the corresponding
-working-model 95% observation prediction intervals are
-`[32.95, 5.69e5]` for panel (a) and `[841.45, 8.40e4]` for panel (b). These are
-reference slices through the plotted bands, not fixed intervals for all x.
-
-For each model, `throughput_model_offsets.csv` also records the mean vertical
-log-residual from each fit. Averaging the absolute model means with equal weight
-across the six models gives 0.81 decades for horizontal resolution alone and
-0.24 decades after including the time step.
-
-This is a descriptive cross-model comparison, not an intrinsic hardware or
-algorithmic scaling law: hardware, precision, implementation maturity, nominal
-resolution, and reported state definitions differ across entries.
-
-## Verify
+`data/raw/checksums.sha256` records every expected raw-file digest. From WSL,
+verify the inputs without modifying them:
 
 ```bash
-uv run pytest
+sha256sum --check data/raw/checksums.sha256
 ```
 
-The tests verify raw-file checksums, the 51-row throughput selection, equal
-model weighting, and the fitted relation. Generated PDFs should additionally be
-inspected visually before submission.
+## Saola figure
 
-## Data provenance
+The forecast is initialized at 12:00 UTC on 31 August 2023 and plotted through
+12:00 UTC on 3 September, a nominal 72-hour window. Lines show observations,
+the ECMWF IFS ensemble mean, deterministic Pangu, the GenCast ensemble mean,
+and the Pangu post-processing ensemble mean. The yellow and dashed-purple
+shading gives the full memberwise minimum--maximum range, matching the source
+figure. These ranges describe the available ensemble members; they are not
+confidence or prediction intervals. GenCast spans lead times 0--72 h, IFS and
+post-processing span 6--72 h, and the available Pangu track spans 6--60 h.
 
-See [`data/raw/README.md`](data/raw/README.md) for source locations and
-filenames. The five 547 MB Saola CSVs are a local, Git-ignored cache whose
-hashes are recorded in `external_checksums.sha256`; they should be deposited as
-a separate Zenodo data archive. Do not edit files under `data/raw/`.
+Suggested manuscript caption:
 
-The release and data-deposit sequence is documented in
-[`ZENODO_HANDOFF.md`](ZENODO_HANDOFF.md).
+> **AI forecast refinement for tropical cyclones, applied to Typhoon Saola
+> (2023).** (a) Track forecasts compared with IBTrACS observations. (b) Maximum
+> wind speed and (c) minimum sea-level pressure forecasts. Black denotes
+> observations; orange the ECMWF IFS ensemble mean; solid purple Pangu; yellow
+> the GenCast ensemble mean; and dashed purple the Pangu post-processing
+> ensemble mean. Shading in (b)--(c) shows the full memberwise range for GenCast
+> and Pangu post-processing. (d) Near-real-time CCMP analysis and (e)
+> deep-learning-downscaled wind magnitude at the reference target time. Colors
+> in (d)--(e) show wind speed in m s$^{-1}$, and black points indicate available
+> in situ observations. Panels (a)--(c) use \cite{gomez2026tcbench}; panels
+> (d)--(e) use \cite{zhang2025NNfusionTC}.
+
+## Throughput figure
+
+For horizontal grid spacing `dx` in degrees and time step `dt` in hours, the
+second-panel predictor is named explicitly in the code:
+
+```text
+spatiotemporal_resolution = dx**2 * dt
+```
+
+The normalized throughput is
+
+```text
+SYPD_norm = SYPD * prognostic_vars * vertical_levels / accelerators.
+```
+
+The analysis excludes downscaling entries and the CPU-only `ICON_A_GPU` rows,
+leaving 51 configurations from six model families. It fits weighted least
+squares in base-10 log space, with equal total weight for each model family.
+The gray bands are pointwise 95% observation prediction intervals under the
+working WLS model, not confidence intervals for the fitted mean. Because the
+equal-model weights are design weights rather than inverse error variances,
+the script also prints model-clustered sensitivity intervals. With only six
+clusters, both sets of intervals should be interpreted descriptively.
+
+Expected results from the deposited CSV are:
+
+```text
+SYPD_norm = 4331.33 * horizontal_resolution**3.13714
+coefficient 95% CI: [1938.92, 9675.72]
+exponent 95% CI:    [2.74176, 3.53251]
+weighted R^2:       0.838415
+95% observation PI at horizontal_resolution=1: [32.95, 5.69e5]
+
+SYPD_norm = 8408.99 * spatiotemporal_resolution**1.012775
+coefficient 95% CI: [5683.24, 12442.04]
+exponent 95% CI:    [0.956666, 1.068884]
+clustered exponent sensitivity CI: [0.874692, 1.150857]
+weighted R^2:       0.964096
+95% observation PI at spatiotemporal_resolution=1: [841.45, 8.40e4]
+```
+
+The equal-model mean absolute vertical offset is 0.81 decades using horizontal
+resolution alone and 0.24 decades using spatiotemporal resolution. This is a
+descriptive cross-model comparison, not an intrinsic hardware or algorithmic
+scaling law: hardware, precision, implementation maturity, nominal resolution,
+and reported state definitions differ among entries.
+
+## GitHub and Zenodo
+
+For the software DOI, [enable the public repository in
+Zenodo](https://help.zenodo.org/docs/github/enable-repository/) and create a
+[GitHub release](https://help.zenodo.org/docs/github/archive-software/github-upload/).
+Zenodo archives that release and assigns its DOI. The ignored 547 MB Saola
+tables are not included in the GitHub release archive; deposit them separately
+and add their DOI here before claiming that a fresh clone reproduces the Saola
+figure.
 
 ## License
 
-Code in this repository is released under the MIT License. Upstream datasets
-retain their own terms and should be cited according to the article and their
-source repositories.
+Code is released under the MIT License. Upstream datasets retain their original
+terms and should be cited according to the article and source repositories.

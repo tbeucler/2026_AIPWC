@@ -1,14 +1,8 @@
-[build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "aipwc-figures"
 version = "0.1.0"
-description = "Reproduce the Typhoon Saola and model-throughput figures for AI Pathways from Weather to Climate."
-readme = "README.md"
+description = "Reproduce the Saola forecast and normalized-throughput figures."
 requires-python = ">=3.11,<3.14"
-license = "MIT"
 dependencies = [
     "cartopy>=0.24,<0.26",
     "matplotlib>=3.9,<3.11",
@@ -18,17 +12,5 @@ dependencies = [
     "statsmodels>=0.14,<0.15",
 ]
 
-[project.scripts]
-aipwc-figures = "aipwc_figures.cli:main"
-
-[dependency-groups]
-dev = [
-    "pypdf>=5,<7",
-    "pytest>=8,<10",
-]
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+[tool.uv]
+package = false
