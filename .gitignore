@@ -1,0 +1,9 @@
+/.venv/
+/output/
+/tmp/
+/data/raw/saola/forecasts/
+/data/raw/saola/ibtracs/
+__pycache__/
+*.egg-info/
+*.py[cod]
+.pytest_cache/
