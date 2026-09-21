@@ -1,0 +1,30 @@
+{
+  "title": "AI Pathways from Weather to Climate: figure reproduction",
+  "description": "Python scripts and a frozen environment for reproducing the Typhoon Saola forecast-refinement and normalized-throughput figures from raw data.",
+  "creators": [
+    {
+      "name": "Beucler, Tom",
+      "affiliation": "University of Lausanne",
+      "orcid": "0000-0002-5731-1040"
+    }
+  ],
+  "version": "1.0.0",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "mit",
+  "language": "eng",
+  "keywords": [
+    "climate modeling",
+    "artificial intelligence",
+    "tropical cyclones",
+    "scientific reproducibility",
+    "model throughput"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.22872186",
+      "relation": "requires",
+      "resource_type": "dataset"
+    }
+  ]
+}
