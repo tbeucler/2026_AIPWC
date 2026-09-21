@@ -1,32 +1,39 @@
 # AI Pathways from Weather to Climate: figure reproduction
 
-This repository contains the raw inputs and one Python script for each of two
-figures:
+This repository reproduces two figures from raw data, with one Python script
+for each figure:
 
 - `scripts/plot_saola.py`: the five-panel Typhoon Saola forecast figure;
 - `scripts/plot_throughput.py`: the two-panel normalized-throughput figure.
 
 Both scripts read directly from `data/raw/` and write a PDF and PNG to
-`output/`. They do not modify the source data.
+`output/`. They do not modify the source data. Small inputs are tracked by Git;
+the larger inputs are retrieved from the versioned Zenodo data release below.
 
-## Installation
+## Quick start
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), clone the
-repository, and run from its root:
+In a WSL or Linux terminal, install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) and ensure that
+Git and `curl` are available. Then run:
 
 ```bash
+git clone https://github.com/tbeucler/2026_AIPWC.git
+cd 2026_AIPWC
+
 uv sync --frozen
-```
 
-Python 3.12 is selected by `.python-version`, and `uv.lock` fixes the complete
-environment. No environment activation is required.
+curl -L "https://zenodo.org/api/records/22872186/files/AIPWC_figure_data_v1.0.0.zip/content" -o AIPWC_figure_data_v1.0.0.zip
+uv run python -m zipfile -e AIPWC_figure_data_v1.0.0.zip .
+rm AIPWC_figure_data_v1.0.0.zip README_DATA.md SHA256SUMS
+sha256sum --check data/raw/checksums.sha256
 
-## Reproduce the figures
-
-```bash
 uv run python scripts/plot_throughput.py
 uv run python scripts/plot_saola.py
 ```
+
+Python 3.12 is selected by `.python-version`, and `uv.lock` fixes the complete
+environment. No environment activation is required. The download is 51.9 MB
+and expands to approximately 547 MB.
 
 The scripts create:
 
@@ -62,18 +69,9 @@ The complete figure-data release is archived on Zenodo:
   (51.9 MB; SHA-256
   `671052e5de6bf8d3e77cd6cccf45105615d6820b3204f5ded9b18659db1273f6`).
 
-From the repository root, download and extract only the archived raw-data
-tree. These commands add the five ignored Saola tables and verify every input:
-
-```bash
-curl -L "https://zenodo.org/api/records/22872186/files/AIPWC_figure_data_v1.0.0.zip/content" -o AIPWC_figure_data_v1.0.0.zip
-unzip -o AIPWC_figure_data_v1.0.0.zip 'data/raw/*' -d .
-rm AIPWC_figure_data_v1.0.0.zip
-sha256sum --check data/raw/checksums.sha256
-```
-
-`data/raw/checksums.sha256` records every expected raw-file digest; the final
-command verifies the inputs without modifying them.
+The quick-start commands retain only the archived `data/raw/` tree. The file
+`data/raw/checksums.sha256` records every expected raw-file digest and verifies
+the inputs without modifying them.
 
 ## Saola figure
 
