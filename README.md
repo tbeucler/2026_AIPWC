@@ -54,22 +54,26 @@ data/raw/saola/forecasts/postprocessing_panguweather_ANN_LeakyReLU,_M_2023.csv
 data/raw/saola/ibtracs/ibtracs.ALL.list.v04r01.csv
 ```
 
-The public archive will be added before release:
+The complete figure-data release is archived on Zenodo:
 
-```text
-Zenodo concept DOI: TO BE ADDED
-Saola raw-data download: TO BE ADDED
-```
+- pinned version: [doi:10.5281/zenodo.22872186](https://doi.org/10.5281/zenodo.22872186);
+- all versions: [doi:10.5281/zenodo.22872185](https://doi.org/10.5281/zenodo.22872185);
+- [direct archive download](https://zenodo.org/api/records/22872186/files/AIPWC_figure_data_v1.0.0.zip/content)
+  (51.9 MB; SHA-256
+  `671052e5de6bf8d3e77cd6cccf45105615d6820b3204f5ded9b18659db1273f6`).
 
-Extract the downloaded archive under `data/raw/saola/` so that the five files
-appear at the paths above.
-
-`data/raw/checksums.sha256` records every expected raw-file digest. From WSL,
-verify the inputs without modifying them:
+From the repository root, download and extract only the archived raw-data
+tree. These commands add the five ignored Saola tables and verify every input:
 
 ```bash
+curl -L "https://zenodo.org/api/records/22872186/files/AIPWC_figure_data_v1.0.0.zip/content" -o AIPWC_figure_data_v1.0.0.zip
+unzip -o AIPWC_figure_data_v1.0.0.zip 'data/raw/*' -d .
+rm AIPWC_figure_data_v1.0.0.zip
 sha256sum --check data/raw/checksums.sha256
 ```
+
+`data/raw/checksums.sha256` records every expected raw-file digest; the final
+command verifies the inputs without modifying them.
 
 ## Saola figure
 
@@ -169,14 +173,15 @@ changing the raw file.
 
 ## GitHub and Zenodo
 
-For the software archive, [enable the public repository in
+The figure data have their own versioned Zenodo record,
+[doi:10.5281/zenodo.22872186](https://doi.org/10.5281/zenodo.22872186). The
+ignored 547 MB Saola tables therefore remain outside the Git repository and
+will not be duplicated in the software archive. To archive the software,
+[enable the public repository in
 Zenodo](https://help.zenodo.org/docs/github/enable-repository/) and create a
 [GitHub release](https://help.zenodo.org/docs/github/archive-software/github-upload/).
-Zenodo archives that release and assigns a version DOI and a stable concept DOI.
-The ignored 547 MB Saola tables are not included in the GitHub archive. Add them
-to a data-containing Zenodo version, replace the placeholders above with the
-concept DOI and download URL, and only then claim that a fresh clone reproduces
-the Saola figure.
+Zenodo will archive that release and assign the code its own version DOI and
+stable concept DOI.
 
 ## License
 
