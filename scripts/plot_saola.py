@@ -229,7 +229,9 @@ def make_figure(
         }
     )
     fig = plt.figure(figsize=(16, 18))
-    outer = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.12], hspace=0.18)
+    # Keep the map row close to panels (a)--(c), while leaving enough room for
+    # panel (c)'s date labels above the map titles.
+    outer = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.12], hspace=0.0)
     top = outer[0].subgridspec(1, 2, wspace=0.10)
     right = top[0, 1].subgridspec(2, 1, hspace=0.18)
     bottom = outer[1].subgridspec(1, 2, wspace=0.09)
@@ -250,7 +252,8 @@ def make_figure(
     ax_track.scatter(
         obs["lon"], obs["lat"], s=14, facecolor="white", edgecolor="black", zorder=6
     )
-    for model in MODEL_ORDER:
+    track_models = MODEL_ORDER[:-1]
+    for model in track_models:
         rows = forecasts.loc[forecasts["model"].eq(model)].dropna(subset=["lat", "lon"])
         track = rows.groupby("valid_time")[["lat", "lon"]].mean().sort_index()
         style = MODEL_STYLE[model]
@@ -265,7 +268,7 @@ def make_figure(
     handles = [Line2D([0], [0], color="black", marker="o", label="Observations")]
     handles.extend(
         Line2D([0], [0], linewidth=2, label=model, **MODEL_STYLE[model])
-        for model in MODEL_ORDER
+        for model in track_models
     )
     ax_track.legend(handles=handles, loc="lower right", frameon=True)
 
@@ -301,6 +304,11 @@ def make_figure(
 
     plot_timeseries(ax_wind, "wind_kts", "vmax_kt", "Max wind (kt)")
     plot_timeseries(ax_pressure, "mslp_hpa", "mslp_hpa", "Sea-level pressure (hPa)")
+    postprocessing_handle = Line2D(
+        [0], [0], linewidth=2, label="AI Post-Processing",
+        **MODEL_STYLE["AI Post-Processing"],
+    )
+    ax_wind.legend(handles=[postprocessing_handle], loc="lower right", frameon=True)
     ax_wind.text(
         0.98, 0.98, "(b)  Intensity Forecast", transform=ax_wind.transAxes,
         ha="right", va="top", fontsize=21, bbox=title_box,
@@ -373,7 +381,12 @@ def make_figure(
     colorbar.set_label("Wind Speed (m/s)")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, bbox_inches="tight")
+    # Omit volatile timestamps so repeated runs produce the same PDF bytes.
+    fig.savefig(
+        output_path,
+        bbox_inches="tight",
+        metadata={"CreationDate": None, "ModDate": None},
+    )
     fig.savefig(output_path.with_suffix(".png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
 

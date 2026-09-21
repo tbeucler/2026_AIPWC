@@ -91,18 +91,14 @@ class ThroughputFit:
         return coefficient, exponent
 
     def prediction_interval95(self, predictor_value: float) -> tuple[float, float]:
-        """Return the 95% observation prediction interval at one positive value."""
+        """Return the nominal 95% model-balanced CV+-style interval."""
 
         if predictor_value <= 0:
             raise ValueError("predictor_value must be positive")
-        design = sm.add_constant(
-            np.array([np.log10(predictor_value)]), has_constant="add"
+        lower, upper = _cvplus_prediction_interval(
+            self, np.array([predictor_value], dtype=float)
         )
-        prediction = self.result.get_prediction(design).summary_frame(alpha=0.05)
-        return (
-            float(10.0 ** prediction["obs_ci_lower"].iloc[0]),
-            float(10.0 ** prediction["obs_ci_upper"].iloc[0]),
-        )
+        return float(lower[0]), float(upper[0])
 
 
 def load_raw_data(path: Path = DEFAULT_DATA) -> pd.DataFrame:
@@ -175,17 +171,95 @@ def fit_power_law(
     return ThroughputFit(observations, weights, result, predictor)
 
 
+def _weighted_order_quantile(
+    values: np.ndarray, weights: np.ndarray, quantile: float
+) -> float:
+    """Return a discrete weighted quantile; weight scaling has no effect."""
+
+    order = np.argsort(values)
+    sorted_values = np.asarray(values)[order]
+    sorted_weights = np.asarray(weights)[order]
+    threshold = quantile * sorted_weights.sum()
+    index = np.searchsorted(np.cumsum(sorted_weights), threshold, side="left")
+    return float(sorted_values[min(index, len(sorted_values) - 1)])
+
+
+def _cvplus_prediction_interval(
+    fit: ThroughputFit,
+    predictor_values: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Construct a model-balanced, leave-one-model-family-out CV+-style band.
+
+    Each model family is held out in turn. Absolute log-space residuals for the
+    held-out family are paired with predictions from the corresponding fit.
+    Candidate bounds receive equal total weight per model family. This avoids
+    interpreting design weights as inverse error variances, but six families
+    are too few for a distribution-free group-conformal coverage guarantee.
+    """
+
+    predictor_values = np.asarray(predictor_values, dtype=float)
+    if np.any(~np.isfinite(predictor_values)) or np.any(predictor_values <= 0):
+        raise ValueError("predictor values must be finite and positive")
+
+    observations = fit.observations
+    log_predictor = np.log10(observations[fit.predictor].to_numpy())
+    log_t = np.log10(observations["sypd_norm"].to_numpy())
+    grid_design = sm.add_constant(
+        np.log10(predictor_values), has_constant="add"
+    )
+    lower_candidates = np.empty((len(observations), len(predictor_values)))
+    upper_candidates = np.empty_like(lower_candidates)
+
+    for model in observations["model_name"].unique():
+        train = observations["model_name"].ne(model).to_numpy()
+        test = ~train
+        train_counts = (
+            observations.loc[train]
+            .groupby("model_name")["model_name"]
+            .transform("count")
+        )
+        train_weights = 1.0 / train_counts.to_numpy()
+        held_out_fit = sm.WLS(
+            log_t[train],
+            sm.add_constant(log_predictor[train], has_constant="add"),
+            weights=train_weights,
+        ).fit()
+        held_out_prediction = held_out_fit.predict(
+            sm.add_constant(log_predictor[test], has_constant="add")
+        )
+        scores = np.abs(log_t[test] - held_out_prediction)
+        grid_prediction = held_out_fit.predict(grid_design)
+        lower_candidates[test] = grid_prediction[None, :] - scores[:, None]
+        upper_candidates[test] = grid_prediction[None, :] + scores[:, None]
+
+    weights = fit.weights.to_numpy()
+    lower = np.array(
+        [
+            _weighted_order_quantile(lower_candidates[:, index], weights, 0.025)
+            for index in range(len(predictor_values))
+        ]
+    )
+    upper = np.array(
+        [
+            _weighted_order_quantile(upper_candidates[:, index], weights, 0.975)
+            for index in range(len(predictor_values))
+        ]
+    )
+    return 10.0**lower, 10.0**upper
+
+
 def _prediction_data(fit: ThroughputFit):
     log_predictor = np.log10(fit.observations[fit.predictor].to_numpy())
     grid_log = np.linspace(
         log_predictor.min() - 0.04, log_predictor.max() + 0.04, 600
     )
-    prediction = fit.result.get_prediction(sm.add_constant(grid_log)).summary_frame(alpha=0.05)
+    grid_x = 10.0**grid_log
+    lower, upper = _cvplus_prediction_interval(fit, grid_x)
     return (
-        10.0**grid_log,
-        10.0 ** prediction["mean"].to_numpy(),
-        10.0 ** prediction["obs_ci_lower"].to_numpy(),
-        10.0 ** prediction["obs_ci_upper"].to_numpy(),
+        grid_x,
+        10.0 ** fit.result.predict(sm.add_constant(grid_log)),
+        lower,
+        upper,
     )
 
 
@@ -263,11 +337,13 @@ def make_figure(
     - dx^2 dt fit: SYPD_norm = 8.409e3 * (dx^2 dt)^1.0128;
       working-model coefficient 95% CI [5.683e3, 1.244e4], exponent 95% CI
       [0.9567, 1.0689], R^2=0.9641.
+    - The nominal model-balanced CV+-style intervals at predictor=1 are
+      [33.7772, 2.03531e6] for dx and [602.437, 159874] for dx^2 dt.
     - The equal-model mean absolute vertical offset decreases from 0.8078
       decades for dx to 0.2408 decades for dx^2 dt.
-    The plotted working-model 95% observation prediction intervals vary with
-    the predictor. Their values at predictor=1, the parameter intervals, and
-    model-clustered sensitivity intervals are printed when run as a script.
+    The plotted nominal 95% prediction bands use leave-one-model-family-out
+    CV+-style scores in log space. Their values at predictor=1, the parameter
+    intervals, and model-clustered sensitivity intervals are printed when run.
     """
 
     data = load_raw_data(data_path)
@@ -305,7 +381,12 @@ def make_figure(
     fig.tight_layout()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, bbox_inches="tight")
+    # Omit volatile timestamps so repeated runs produce the same PDF bytes.
+    fig.savefig(
+        output_path,
+        bbox_inches="tight",
+        metadata={"CreationDate": None, "ModDate": None},
+    )
     fig.savefig(output_path.with_suffix(".png"), dpi=180, bbox_inches="tight")
     plt.close(fig)
 
@@ -331,7 +412,7 @@ def print_fit(label: str, fit: ThroughputFit) -> None:
         f"  cluster-robust exponent sensitivity CI: "
         f"[{robust_exponent_ci[0]:.6f}, {robust_exponent_ci[1]:.6f}]\n"
         f"  weighted R^2: {fit.result.rsquared:.6f}\n"
-        f"  observation 95% PI at predictor=1: "
+        f"  model-balanced CV+-style nominal 95% PI at predictor=1: "
         f"[{prediction_ci[0]:.6g}, {prediction_ci[1]:.6g}]\n"
         f"  mean absolute model offset: "
         f"{mean_absolute_model_offset(fit):.6f} decades"

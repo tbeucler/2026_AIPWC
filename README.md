@@ -40,7 +40,8 @@ ignored by Git.
 
 ## Raw data
 
-The throughput CSV, GeoTIFFs, station locations, and archived Natural Earth
+The throughput CSV, GeoTIFFs, station locations, and archived
+[Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/) public-domain
 shapefiles are stored under `data/raw/` and tracked by Git. The five Saola
 forecast and observation tables total approximately 547 MB and are intentionally
 not tracked:
@@ -53,12 +54,15 @@ data/raw/saola/forecasts/postprocessing_panguweather_ANN_LeakyReLU,_M_2023.csv
 data/raw/saola/ibtracs/ibtracs.ALL.list.v04r01.csv
 ```
 
-Their original Curnagl locations are:
+The public archive will be added before release:
 
 ```text
-/work/FAC/FGSE/IDYST/tbeucler/default/milton/TCBench Results/
-/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/
+Zenodo concept DOI: TO BE ADDED
+Saola raw-data download: TO BE ADDED
 ```
+
+Extract the downloaded archive under `data/raw/saola/` so that the five files
+appear at the paths above.
 
 `data/raw/checksums.sha256` records every expected raw-file digest. From WSL,
 verify the inputs without modifying them:
@@ -72,11 +76,15 @@ sha256sum --check data/raw/checksums.sha256
 The forecast is initialized at 12:00 UTC on 31 August 2023 and plotted through
 12:00 UTC on 3 September, a nominal 72-hour window. Lines show observations,
 the ECMWF IFS ensemble mean, deterministic Pangu, the GenCast ensemble mean,
-and the Pangu post-processing ensemble mean. The yellow and dashed-purple
-shading gives the full memberwise minimum--maximum range, matching the source
-figure. These ranges describe the available ensemble members; they are not
-confidence or prediction intervals. GenCast spans lead times 0--72 h, IFS and
-post-processing span 6--72 h, and the available Pangu track spans 6--60 h.
+and the Pangu post-processing ensemble mean. IBTrACS intensity is read from
+`USA_WIND` and `USA_PRES`. The yellow and dashed-purple shading gives the full
+memberwise minimum--maximum range, matching the source figure. These ranges
+describe the available ensemble members; they are not confidence or prediction
+intervals. GenCast spans lead times 0--72 h, IFS and post-processing span
+6--72 h, and the available Pangu track spans 6--60 h.
+
+Panels (d)--(e) are valid at 06:00 UTC on 1 September 2023, as in Figure 7 of
+[Zhang et al. (2025)](https://doi.org/10.1029/2025JH000792).
 
 Suggested manuscript caption:
 
@@ -87,15 +95,16 @@ Suggested manuscript caption:
 > the GenCast ensemble mean; and dashed purple the Pangu post-processing
 > ensemble mean. Shading in (b)--(c) shows the full memberwise range for GenCast
 > and Pangu post-processing. (d) Near-real-time CCMP analysis and (e)
-> deep-learning-downscaled wind magnitude at the reference target time. Colors
+> deep-learning-downscaled wind magnitude at 06:00 UTC on 1 September 2023. Colors
 > in (d)--(e) show wind speed in m s$^{-1}$, and black points indicate available
 > in situ observations. Panels (a)--(c) use \cite{gomez2026tcbench}; panels
 > (d)--(e) use \cite{zhang2025NNfusionTC}.
 
 ## Throughput figure
 
-For horizontal grid spacing `dx` in degrees and time step `dt` in hours, the
-second-panel predictor is named explicitly in the code:
+For horizontal grid spacing `dx` in degrees and time step `dt` in hours, `dt`
+is the interval used to update the prognostic state. The second-panel predictor
+is named explicitly in the code:
 
 ```text
 spatiotemporal_resolution = dx**2 * dt
@@ -108,13 +117,15 @@ SYPD_norm = SYPD * prognostic_vars * vertical_levels / accelerators.
 ```
 
 The analysis excludes downscaling entries and the CPU-only `ICON_A_GPU` rows,
-leaving 51 configurations from six model families. It fits weighted least
-squares in base-10 log space, with equal total weight for each model family.
-The gray bands are pointwise 95% observation prediction intervals under the
-working WLS model, not confidence intervals for the fitted mean. Because the
-equal-model weights are design weights rather than inverse error variances,
-the script also prints model-clustered sensitivity intervals. With only six
-clusters, both sets of intervals should be interpreted descriptively.
+leaving 51 configurations from six model families. The center lines are
+weighted least-squares fits in base-10 log space, with equal total weight for
+each model family. The gray bands are nominal 95% model-balanced CV+-style prediction
+bands: each family is held out in turn, its absolute log residuals are paired
+with predictions from the other five families, and every family receives equal
+total calibration weight. This construction is invariant to an arbitrary
+rescaling of the design weights. With only six model families it is descriptive,
+not a distribution-free group-conformal coverage guarantee. The script also
+prints model-clustered sensitivity intervals for the fitted coefficients.
 
 Expected results from the deposited CSV are:
 
@@ -123,14 +134,14 @@ SYPD_norm = 4331.33 * horizontal_resolution**3.13714
 coefficient 95% CI: [1938.92, 9675.72]
 exponent 95% CI:    [2.74176, 3.53251]
 weighted R^2:       0.838415
-95% observation PI at horizontal_resolution=1: [32.95, 5.69e5]
+nominal 95% CV+-style PI at horizontal_resolution=1: [33.78, 2.04e6]
 
 SYPD_norm = 8408.99 * spatiotemporal_resolution**1.012775
 coefficient 95% CI: [5683.24, 12442.04]
 exponent 95% CI:    [0.956666, 1.068884]
 clustered exponent sensitivity CI: [0.874692, 1.150857]
 weighted R^2:       0.964096
-95% observation PI at spatiotemporal_resolution=1: [841.45, 8.40e4]
+nominal 95% CV+-style PI at spatiotemporal_resolution=1: [602.44, 1.60e5]
 ```
 
 The equal-model mean absolute vertical offset is 0.81 decades using horizontal
@@ -139,15 +150,33 @@ descriptive cross-model comparison, not an intrinsic hardware or algorithmic
 scaling law: hardware, precision, implementation maturity, nominal resolution,
 and reported state definitions differ among entries.
 
+The throughput provenance below summarizes the `source` and `source_note`
+columns of the raw CSV. Correspondence entries are not independently
+accessible. The raw CSV spells Oliver Watt-Meyer's surname as
+`Watts-Meyer`; that source typo is documented here rather than silently
+changing the raw file.
+
+| Model | Source recorded in the raw CSV |
+| --- | --- |
+| ACE2 | Oliver Watt-Meyer correspondence |
+| CAMulator and CAMulator Coupled | Will Chapman correspondence |
+| SCREAM | [SCREAM source](https://doi.org/10.1029/2024MS004314) |
+| ICON-A | [ICON-A source](https://doi.org/10.5194/gmd-15-6985-2022) |
+| CliMA | [CliMA atmosphere dynamical core preprint](https://essopenarchive.org/users/891100/articles/1268069-the-climate-modeling-alliance-atmosphere-dynamical-core-concepts-numerics-and-scaling) |
+| NeuralGCM | [NeuralGCM source, Table 1](https://www.nature.com/articles/s41586-024-07744-y/tables/1) |
+| R2-D2 | [R2-D2 source](https://doi.org/10.1073/pnas.2420288122) and Ignacio Lopez-Gomez correspondence |
+| GenFocal | [arXiv:2412.08079](https://arxiv.org/abs/2412.08079) and Ignacio Lopez-Gomez correspondence |
+
 ## GitHub and Zenodo
 
-For the software DOI, [enable the public repository in
+For the software archive, [enable the public repository in
 Zenodo](https://help.zenodo.org/docs/github/enable-repository/) and create a
 [GitHub release](https://help.zenodo.org/docs/github/archive-software/github-upload/).
-Zenodo archives that release and assigns its DOI. The ignored 547 MB Saola
-tables are not included in the GitHub release archive; deposit them separately
-and add their DOI here before claiming that a fresh clone reproduces the Saola
-figure.
+Zenodo archives that release and assigns a version DOI and a stable concept DOI.
+The ignored 547 MB Saola tables are not included in the GitHub archive. Add them
+to a data-containing Zenodo version, replace the placeholders above with the
+concept DOI and download URL, and only then claim that a fresh clone reproduces
+the Saola figure.
 
 ## License
 
