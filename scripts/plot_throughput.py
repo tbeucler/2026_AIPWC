@@ -25,6 +25,8 @@ RAW_COLUMNS = [
     "vert_levels",
     "time_step_h",
     "sypd",
+    "hardware_count",
+    "accelerators_per_node_assumed",
     "n_accelerators",
     "prognostic_vars",
 ]
@@ -36,6 +38,10 @@ MODEL_STYLES = {
     "NeuralGCM": {"marker": "D", "color": "#23B8CE", "s": 52},
     "ACE2": {"marker": "o", "color": "#45A84E", "s": 52},
     "CAMulator": {"marker": "s", "color": "#45A84E", "s": 55},
+}
+MODEL_LABELS = {
+    "SCREAM_GPU": "SCREAM",
+    "ICON_A_GPU": "ICON-A",
 }
 
 
@@ -119,16 +125,42 @@ def load_raw_data(path: Path = DEFAULT_DATA) -> pd.DataFrame:
             "horiz_res_deg": "dx",
             "vert_levels": "nvert",
             "time_step_h": "dt",
-            "n_accelerators": "nacc",
+            "hardware_count": "nhardware",
+            "accelerators_per_node_assumed": "nacc_per_hardware",
+            "n_accelerators": "nacc_reported",
             "prognostic_vars": "nprog",
         }
     )
-    for column in ["dx", "nvert", "dt", "sypd", "nacc", "nprog"]:
+    numeric_columns = [
+        "dx",
+        "nvert",
+        "dt",
+        "sypd",
+        "nhardware",
+        "nacc_per_hardware",
+        "nacc_reported",
+        "nprog",
+    ]
+    for column in numeric_columns:
         data[column] = pd.to_numeric(data[column], errors="coerce")
 
+    # Reconstruct the accelerator count from the primitive hardware columns.
+    data["nacc"] = data["nhardware"] * data["nacc_per_hardware"]
+    comparable = data["nacc"].notna() & data["nacc_reported"].notna()
+    inconsistent = comparable & ~np.isclose(
+        data["nacc"], data["nacc_reported"], equal_nan=True
+    )
+    if inconsistent.any():
+        rows = data.loc[
+            inconsistent,
+            ["model_name", "nacc", "nacc_reported"],
+        ].to_dict("records")
+        raise ValueError(f"Accelerator-count columns disagree: {rows}")
+
     data["spatiotemporal_resolution"] = data["dx"] ** 2 * data["dt"]
+    positive_nacc = data["nacc"].where(data["nacc"].gt(0))
     data["sypd_norm"] = (
-        data["sypd"] * data["nprog"] * data["nvert"] / data["nacc"]
+        data["sypd"] * data["nprog"] * data["nvert"] / positive_nacc
     )
     return data
 
@@ -159,7 +191,12 @@ def fit_power_law(
 
     observations = select_fit_rows(data)
     if len(observations) != 51 or observations["model_name"].nunique() != 6:
-        raise ValueError("Expected 51 configurations from six model families")
+        counts = observations.groupby("model_name").size().sort_index().to_dict()
+        raise ValueError(
+            "Expected 51 configurations from six model families; "
+            f"found {len(observations)} from "
+            f"{observations['model_name'].nunique()}: {counts}"
+        )
     counts = observations.groupby("model_name")["model_name"].transform("count")
     weights = 1.0 / counts
     weights = weights / weights.mean()
@@ -284,7 +321,7 @@ def _plot_panel(
         ax.scatter(
             fit.observations.loc[rows, fit.predictor],
             fit.observations.loc[rows, "sypd_norm"],
-            label=name,
+            label=MODEL_LABELS.get(name, name),
             edgecolors="none",
             alpha=0.98,
             zorder=3,
@@ -347,6 +384,14 @@ def make_figure(
     """
 
     data = load_raw_data(data_path)
+    missing_accelerators = sorted(
+        data.loc[data["nacc"].isna(), "model_name"].dropna().unique()
+    )
+    if missing_accelerators:
+        print(
+            "Excluded configurations with incomplete accelerator metadata: "
+            + ", ".join(missing_accelerators)
+        )
     fit_dx = fit_power_law(data, "dx")
     fit_spatiotemporal = fit_power_law(data, "spatiotemporal_resolution")
 

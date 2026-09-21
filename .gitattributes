@@ -1,0 +1,9 @@
+# Preserve byte-identical raw text inputs on every platform.
+data/raw/**/*.csv text eol=lf
+data/raw/**/*.txt text eol=lf
+data/raw/checksums.sha256 text eol=lf
+
+*.dbf binary
+*.shp binary
+*.shx binary
+*.tif binary

@@ -23,6 +23,7 @@ INIT_TIME = pd.Timestamp("2023-08-31 12:00", tz="UTC")
 END_TIME = pd.Timestamp("2023-09-03 12:00", tz="UTC")
 DEFAULT_DATA = RAW / "saola"
 DEFAULT_OUTPUT = OUTPUT / "Figure_Forecast_Saola.pdf"
+DATA_DOI = "https://doi.org/10.5281/zenodo.22872186"
 
 MODEL_ORDER = [
     "Physics-based",
@@ -42,6 +43,26 @@ FORECAST_FILES = {
     "2023_GENC.csv": "Probabilistic AI",
     "postprocessing_panguweather_ANN_LeakyReLU,_M_2023.csv": "AI Post-Processing",
 }
+
+
+def check_inputs(data_dir: Path = DEFAULT_DATA) -> None:
+    """Report every missing scientific input before reading the large tables."""
+
+    required = [
+        data_dir / "ibtracs" / "ibtracs.ALL.list.v04r01.csv",
+        *(data_dir / "forecasts" / name for name in FORECAST_FILES),
+        data_dir / "CCMP_Wind_Analysis_20230901_V03_merge3_3.tif",
+        data_dir / "Deep_Learning_Wind_20230901_V03_merge3_3.tif",
+        data_dir / "station_loc.txt",
+    ]
+    missing = [path for path in required if not path.is_file()]
+    if missing:
+        paths = "\n".join(f"  - {path}" for path in missing)
+        raise FileNotFoundError(
+            f"Missing raw inputs:\n{paths}\n"
+            f"Download the data release from {DATA_DOI} and follow the "
+            "README quick-start instructions."
+        )
 
 
 def _column(frame: pd.DataFrame, candidates: Iterable[str]) -> str | None:
@@ -201,6 +222,7 @@ def make_figure(
     import cartopy
     import cartopy.crs as ccrs
 
+    check_inputs(data_dir)
     cartopy.config["data_dir"] = str(RAW / "natural_earth")
     observations = load_observations(data_dir)
     forecasts = load_forecasts(data_dir)
@@ -208,9 +230,6 @@ def make_figure(
     ccmp_path = data_dir / "CCMP_Wind_Analysis_20230901_V03_merge3_3.tif"
     dl_path = data_dir / "Deep_Learning_Wind_20230901_V03_merge3_3.tif"
     station_path = data_dir / "station_loc.txt"
-    for path in [ccmp_path, dl_path, station_path]:
-        if not path.exists():
-            raise FileNotFoundError(path)
 
     plt.rcParams.update(
         {
@@ -335,13 +354,24 @@ def make_figure(
     ax_pressure.tick_params(labelbottom=True)
 
     stations = np.loadtxt(station_path)
+    ccmp_data = _read_tiff(ccmp_path)
+    dl_data = _read_tiff(dl_path)
+    extents = [ccmp_data[3], dl_data[3]]
+    shared_extent = (
+        max(extent[0] for extent in extents),
+        min(extent[1] for extent in extents),
+        max(extent[2] for extent in extents),
+        min(extent[3] for extent in extents),
+    )
     images = []
-    for ax, path, title, vectors in [
-        (ax_ccmp, ccmp_path, "(d)  Near Real-Time Coarse Analysis Wind Field", True),
-        (ax_dl, dl_path, "(e)  Deep Learning Downscaled Wind Magnitude", False),
+    for ax, raster, title, vectors in [
+        (ax_ccmp, ccmp_data, "(d)  Near Real-Time Coarse Analysis Wind Field", True),
+        (ax_dl, dl_data, "(e)  Deep Learning Downscaled Wind Magnitude", False),
     ]:
-        u, v, speed, extent, x, y = _read_tiff(path)
-        _configure_map(ax, extent, dark_ocean=True)
+        u, v, speed, extent, x, y = raster
+        # Display the geographic intersection so panels (d) and (e) compare
+        # the same domain despite the different source-raster bounds.
+        _configure_map(ax, shared_extent, dark_ocean=True)
         if ax is ax_dl:
             # Keep panel (e)'s latitude labels out of panel (d)'s map area.
             ax.yaxis.tick_right()

@@ -23,8 +23,9 @@ cd 2026_AIPWC
 uv sync --frozen
 
 curl -L "https://zenodo.org/api/records/22872186/files/AIPWC_figure_data_v1.0.0.zip/content" -o AIPWC_figure_data_v1.0.0.zip
-uv run python -m zipfile -e AIPWC_figure_data_v1.0.0.zip .
-rm AIPWC_figure_data_v1.0.0.zip README_DATA.md SHA256SUMS
+echo "671052e5de6bf8d3e77cd6cccf45105615d6820b3204f5ded9b18659db1273f6  AIPWC_figure_data_v1.0.0.zip" | sha256sum --check
+uv run python -c "from zipfile import ZipFile; z=ZipFile('AIPWC_figure_data_v1.0.0.zip'); z.extractall('.', [n for n in z.namelist() if '/forecasts/' in n or '/ibtracs/' in n])"
+rm -f AIPWC_figure_data_v1.0.0.zip
 sha256sum --check data/raw/checksums.sha256
 
 uv run python scripts/plot_throughput.py
@@ -69,9 +70,12 @@ The complete figure-data release is archived on Zenodo:
   (51.9 MB; SHA-256
   `671052e5de6bf8d3e77cd6cccf45105615d6820b3204f5ded9b18659db1273f6`).
 
-The quick-start commands retain only the archived `data/raw/` tree. The file
-`data/raw/checksums.sha256` records every expected raw-file digest and verifies
-the inputs without modifying them.
+The quick-start commands verify the complete archive and extract only the five
+large files absent from Git. The file `data/raw/checksums.sha256` then verifies
+every input used by the scripts. Git preserves the tracked raw text files with
+LF line endings on every platform, so their byte-level checksums are stable.
+The archive also contains the smaller raw inputs for standalone reuse; the
+quick-start extraction leaves the Git-tracked copies in place.
 
 ## Saola figure
 
@@ -82,11 +86,15 @@ and the Pangu post-processing ensemble mean. IBTrACS intensity is read from
 `USA_WIND` and `USA_PRES`. The yellow and dashed-purple shading gives the full
 memberwise minimum--maximum range, matching the source figure. These ranges
 describe the available ensemble members; they are not confidence or prediction
-intervals. GenCast spans lead times 0--72 h, IFS and post-processing span
-6--72 h, and the available Pangu track spans 6--60 h.
+intervals. Within the plotted window, GenCast is available every 6 h from
+0--72 h, IFS every 6 h from 6--72 h, and Pangu every 6 h from 6--60 h. Pangu
+post-processing is available at 6, 12, 18, 24, 48, and 72 h. Curves connect
+the available forecast times without temporal interpolation.
 
 Panels (d)--(e) are valid at 06:00 UTC on 1 September 2023, as in Figure 7 of
-[Zhang et al. (2025)](https://doi.org/10.1029/2025JH000792).
+[Zhang et al. (2025)](https://doi.org/10.1029/2025JH000792). Both display the
+shared 109--119$^\circ$E, 17--25$^\circ$N domain. The source-grid spacings are
+0.25$^\circ$ for CCMP and 0.0625$^\circ$ for the downscaled field.
 
 Suggested manuscript caption:
 
@@ -96,9 +104,11 @@ Suggested manuscript caption:
 > observations; orange the ECMWF IFS ensemble mean; solid purple Pangu; yellow
 > the GenCast ensemble mean; and dashed purple the Pangu post-processing
 > ensemble mean. Shading in (b)--(c) shows the full memberwise range for GenCast
-> and Pangu post-processing. (d) Near-real-time CCMP analysis and (e)
-> deep-learning-downscaled wind magnitude at 06:00 UTC on 1 September 2023. Colors
-> in (d)--(e) show wind speed in m s$^{-1}$, and black points indicate available
+> and Pangu post-processing; forecasts are connected at their available valid
+> times, which differ among products. (d) Near-real-time 0.25$^\circ$ CCMP
+> analysis and (e) 0.0625$^\circ$ deep-learning-downscaled wind magnitude at
+> 06:00 UTC on 1 September 2023, shown over their shared domain. Colors in
+> (d)--(e) show wind speed in m s$^{-1}$, and black points indicate available
 > in situ observations. Panels (a)--(c) use \cite{gomez2026tcbench}; panels
 > (d)--(e) use \cite{zhang2025NNfusionTC}.
 
@@ -118,8 +128,13 @@ The normalized throughput is
 SYPD_norm = SYPD * prognostic_vars * vertical_levels / accelerators.
 ```
 
-The analysis excludes downscaling entries and the CPU-only `ICON_A_GPU` rows,
-leaving 51 configurations from six model families. The center lines are
+The accelerator count is reconstructed as `hardware_count *
+accelerators_per_node_assumed` and checked against the reported
+`n_accelerators` column. Spreadsheet formula columns and spacer rows are not
+used. The analysis excludes two downscaling configurations, four ICON-A rows
+labelled `trad_cpu`, and the CAMulator Coupled configuration, for which the
+primitive accelerator metadata are missing. This leaves 51 configurations
+from six model families. The center lines are
 weighted least-squares fits in base-10 log space, with equal total weight for
 each model family. The gray bands are nominal 95% model-balanced CV+-style prediction
 bands: each family is held out in turn, its absolute log residuals are paired
@@ -152,7 +167,7 @@ descriptive cross-model comparison, not an intrinsic hardware or algorithmic
 scaling law: hardware, precision, implementation maturity, nominal resolution,
 and reported state definitions differ among entries.
 
-The throughput provenance below summarizes the `source` and `source_note`
+The throughput provenance below summarizes the `source` and `Comments`
 columns of the raw CSV. Correspondence entries are not independently
 accessible. The raw CSV spells Oliver Watt-Meyer's surname as
 `Watts-Meyer`; that source typo is documented here rather than silently
